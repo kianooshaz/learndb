@@ -1,0 +1,142 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Primary lab database.
+  #
+  # Flags chosen for teaching, not production tuning:
+  #   shared_preload_libraries=pg_stat_statements -> needed for 07/10 labs
+  #   log_lock_waits=on                           -> 06-transactions labs
+  #   wal_level=logical                           -> 11-advanced/logical_replication
+  #   max_wal_senders/max_replication_slots       -> 12-production/replication
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    container_name: learndb-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: learndb
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - log_lock_waits=on
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d learndb"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  # PostGIS requires a different image; opt in with: make postgis
+  postgis:
+    profiles: ["postgis"]
+    image: postgis/postgis:16-3.4
+    container_name: learndb-postgis
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: learndb
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgisdata:/var/lib/postgresql/data
+
+  # PgBouncer for the connection-pooling lab; opt in with: make pgbouncer
+  pgbouncer:
+    profiles: ["pgbouncer"]
+    image: edoburu/pgbouncer:latest
+    container_name: learndb-pgbouncer
+    environment:
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      AUTH_TYPE: plain
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: "20"
+      MAX_CLIENT_CONN: "200"
+      ADMIN_USERS: postgres
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Dedicated subscriber database for logical replication (11-advanced/
+  # logical_replication). Separate INSTANCE on purpose: creating a
+  # subscription that loops back to the same instance deadlocks on its own
+  # snapshot — a real gotcha this lab teaches. Opt in with: make logical
+  shopdb:
+    profiles: ["logical"]
+    image: postgres:16
+    container_name: learndb-shopdb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: shop
+    ports:
+      - "5435:5432"
+    volumes:
+      - shopdata:/var/lib/postgresql/data
+
+  # Citus (sharded PostgreSQL) for 11-advanced/sharding; opt in: make citus
+  citus:
+    profiles: ["citus"]
+    image: citusdata/citus:postgres_16
+    container_name: learndb-citus
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: learndb
+      PGDATA: /var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=citus,pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+    ports:
+      - "5436:5432"
+    volumes:
+      - citusdata:/var/lib/postgresql/data
+
+  # Physical streaming replica for 12-production/replication; opt in: make replica
+  replica:
+    profiles: ["replica"]
+    image: postgres:16
+    container_name: learndb-replica
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    entrypoint: /replica-entrypoint.sh
+    command: ["postgres"]
+    ports:
+      - "5434:5432"
+    volumes:
+      - replicadata:/var/lib/postgresql/data
+      - ./scripts/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  postgisdata:
+  replicadata:
+  shopdata:
+  citusdata:
