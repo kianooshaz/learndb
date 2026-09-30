@@ -33,7 +33,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./init:/docker-entrypoint-initdb.d:ro
+      # Init scripts (extensions, `shop` database, replication pg_hba entry) are
+      # DISABLED: this lab starts with a stock, untouched instance and you create
+      # whatever each lab needs yourself. To get the old auto-seeded setup back,
+      # uncomment the next line and run `make reset`.
+      # - ./init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d learndb"]
       interval: 2s
